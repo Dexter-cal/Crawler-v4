@@ -33,6 +33,9 @@ This document outlines the phased development plan for the Crawler platform, fro
     *   **Quantum-Resistant Crypto**: Replace standard TLS with a post-quantum cryptographic suite (e.g., Kyber) for C2 communications.
     *   **Advanced Persistence**: Implement fileless and kernel-level persistence mechanisms.
     *   **Stealth Modules**: Add plugins for sandbox evasion and anti-forensic measures.
+    *   **Secure Data Vault**: Implement an encrypted, access-controlled database on the C2 for all collected data.
+    *   **Live Response Module**: Create a plugin to provide a remote shell or file system browser on the target.
+    *   **Dynamic Updates**: Give the implant the ability to update its own plugins and configuration from the C2.
 
 ---
 
@@ -59,6 +62,8 @@ This document outlines the phased development plan for the Crawler platform, fro
         *   Implement a decoy recognition engine to identify honeypots.
         *   Develop the optional disinformation injection module.
     *   **Supply Chain Vector Injection Framework (SCVIF)**: Design and simulate high-precision supply chain compromise scenarios (no live deployment).
+    *   **Network Pivoting**: A plugin to use the implant as a proxy to access other systems within the target's private network.
+    *   **Ransomware Module**: A destructive payload to encrypt target files, usable only under the strictest ROE Tier 1 controls.
 
 ---
 

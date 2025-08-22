@@ -19,9 +19,9 @@ IMPLANTS_DB: Dict[str, models.Implant] = {}
 # ==============================================================================
 ROE_GATES = {
     # Tier: [list_of_allowed_plugins]
-    1: ["keylogger", "shell", "filesystem"],  # Example: Tier 1 can do anything
-    2: ["keylogger", "filesystem"],           # Example: Tier 2 can do passive recon
-    3: [],                                    # Example: Tier 3 is dormant until elevated
+    1: ["keylogger", "shell", "filesystem", "dummy"],  # Example: Tier 1 can do anything
+    2: ["keylogger", "filesystem", "dummy"],           # Example: Tier 2 can do passive recon
+    3: [],                                             # Example: Tier 3 is dormant until elevated
 }
 
 def check_roe(implant_id: str, command: str, args: Dict[str, Any]) -> bool:
