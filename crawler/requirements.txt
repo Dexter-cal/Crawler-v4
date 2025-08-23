@@ -6,3 +6,5 @@ requests
 pynput
 click
 pytest
+websockets
+psutil
