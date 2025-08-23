@@ -18,7 +18,7 @@ IMPLANTS_DB: Dict[str, models.Implant] = {}
 # ==============================================================================
 ROE_GATES = {
     # Tier: [list_of_allowed_plugins]
-    1: ["keylogger", "shell", "filesystem", "dummy", "system_profiler"],
+    1: ["keylogger", "shell", "filesystem", "dummy", "system_profiler", "persistence"],
     2: ["keylogger", "filesystem", "dummy", "system_profiler"],
     3: [],
 }
