@@ -31,7 +31,7 @@ class DummyPlugin(BasePlugin):
                 self._data_buffer.append(data_entry)
             time.sleep(5) # Generate data every 5 seconds
 
-    def start(self, args: Dict[str, Any]):
+    def start(self, agent, args: Dict[str, Any]):
         """Starts the dummy data generation in a background thread."""
         if self.is_running:
             print("Dummy plugin is already running.")

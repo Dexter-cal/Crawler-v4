@@ -17,7 +17,7 @@ class ShellPlugin(BasePlugin):
     def get_name(self) -> str:
         return "shell"
 
-    def start(self, args: Dict[str, Any]):
+    def start(self, agent, args: Dict[str, Any]):
         if self.is_running:
             print("Shell plugin is already running.")
             return

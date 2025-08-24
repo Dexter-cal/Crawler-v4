@@ -24,7 +24,7 @@ class ScreenshotPlugin(BasePlugin):
     def get_name(self) -> str:
         return "screenshot"
 
-    def start(self, args: Dict[str, Any]):
+    def start(self, agent, args: Dict[str, Any]):
         """Takes a screenshot, base64 encodes it, and stores it in the buffer."""
         print("Starting screenshot plugin...")
 

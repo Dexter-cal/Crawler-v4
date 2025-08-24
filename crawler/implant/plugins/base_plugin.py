@@ -18,13 +18,14 @@ class BasePlugin(ABC):
         pass
 
     @abstractmethod
-    def start(self, args: Dict[str, Any]):
+    def start(self, agent, args: Dict[str, Any]):
         """
         Start the plugin's data collection process.
 
-        This method should be non-blocking. It's recommended to spawn a new
-        thread for any long-running collection tasks. The `args` dictionary
-        contains any parameters sent from the C2 with the start command.
+        This method should be non-blocking or run in a background thread.
+        It receives a reference to the main agent instance, allowing it to
+        access core agent capabilities (like C2 URL, implant ID, etc.).
+        The `args` dictionary contains any parameters sent from the C2.
         """
         pass
 

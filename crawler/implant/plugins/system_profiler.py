@@ -20,7 +20,7 @@ class SystemProfilerPlugin(BasePlugin):
     def get_name(self) -> str:
         return "system_profiler"
 
-    def start(self, args: Dict[str, Any]):
+    def start(self, agent, args: Dict[str, Any]):
         """Collects all system information and stores it in the buffer."""
         print("Starting system profiler plugin...")
         profile = self._get_system_profile()
