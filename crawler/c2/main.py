@@ -1,5 +1,10 @@
 from fastapi import FastAPI
 from .api import router
+from . import models
+from .database import engine
+
+# This line creates the database tables if they don't exist.
+models.Base.metadata.create_all(bind=engine)
 
 # Create the main FastAPI application instance
 app = FastAPI(

