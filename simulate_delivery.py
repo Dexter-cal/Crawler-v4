@@ -35,20 +35,27 @@ def simulate_vulnerable_app():
 
     # 3. "Vulnerability Triggered": The app processes the payload
     payload = delivery_pack.get("payload", {})
-    if payload.get("type") == "python_b64":
-        print("[+] Simulated Target App: Vulnerability triggered! Processing python_b64 payload.")
+    # Accept both the original and the new polymorphic type
+    if payload.get("type") in ["python_b64", "python_b64_polymorphic"]:
+        print(f"[+] Simulated Target App: Vulnerability triggered! Processing {payload.get('type')} payload.")
         encoded_content = payload.get("content")
 
         try:
             # 4. Decode and execute
             decoded_code = base64.b64decode(encoded_content)
 
-            # Add project root to path to resolve 'crawler' package imports
+            # Define the globals for the execution context.
+            # Setting '__package__' is crucial for relative imports to work correctly.
+            exec_globals = {
+                '__name__': '__main__',
+                '__package__': 'crawler.implant'
+            }
+
+            # Add project root to path to resolve top-level 'crawler' package
             sys.path.insert(0, os.getcwd())
 
             print("[+] Simulated Target App: Executing embedded payload in memory...")
-            # The exec call will now run the agent loader
-            exec(decoded_code, {'__name__': '__main__'})
+            exec(decoded_code, exec_globals)
 
         except Exception as e:
             print(f"[!] Simulated Target App: Error during payload execution. ({e})")
