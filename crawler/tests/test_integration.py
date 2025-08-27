@@ -92,7 +92,36 @@ def test_comprehensive_flow(c2_server_and_db):
     requests.post(f"{C2_URL}/admin/tasks/{implant_id}", json=task_payload)
     time.sleep(agent.BEACON_INTERVAL_SECONDS + 2)
 
-    # 4. Terminate
+    # 4. Test Evasion Plugin
+    print("\n--- Testing Evasion Plugin ---")
+    print("Test: Setting implant tier to 1 for evasion plugin.")
+    response = requests.put(f"{C2_URL}/admin/tier/{implant_id}/1")
+    assert response.status_code == 200
+
+    evasion_task_payload = {"command": "start_plugin", "args": {"plugin_name": "evasion"}}
+    response = requests.post(f"{C2_URL}/admin/tasks/{implant_id}", json=evasion_task_payload)
+    assert response.status_code == 200 # Ensure task was created
+    time.sleep(agent.BEACON_INTERVAL_SECONDS + 2)
+
+    # Verify evasion results
+    response = requests.get(f"{C2_URL}/admin/tasks/{implant_id}")
+    assert response.status_code == 200
+    tasks = response.json()
+
+    evasion_task_found = False
+    for task in tasks:
+        if task.get("command") == "start_plugin" and task.get("args", {}).get("plugin_name") == "evasion":
+            assert task["status"] == "completed"
+            assert task["result"]
+            result_data = json.loads(task["result"])
+            assert isinstance(result_data, dict)
+            assert len(result_data) > 0 # Expecting some indicators in a test env
+            print(f"Test: Evasion plugin ran successfully, results: {result_data}")
+            evasion_task_found = True
+            break
+    assert evasion_task_found, "Evasion plugin task was not found in the task list."
+
+    # 5. Terminate
     print("\n--- Terminating Agent ---")
     terminate_payload = {"command": "terminate", "args": {}}
     requests.post(f"{C2_URL}/admin/tasks/{implant_id}", json=terminate_payload)

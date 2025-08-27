@@ -2,49 +2,13 @@ import platform
 import socket
 import os
 import psutil
-import datetime
-from typing import List, Dict, Any
+from typing import Dict, Any
 
-from .base_plugin import BasePlugin
+class SystemProfiler:
+    """A plugin to gather a comprehensive profile of the target system."""
 
-class SystemProfilerPlugin(BasePlugin):
-    """
-    A plugin to gather a comprehensive profile of the target system.
-    This is a one-shot plugin; it collects data when started and does not
-    run a persistent background thread.
-    """
-
-    def __init__(self):
-        self._data_buffer: List[Dict[str, Any]] = []
-
-    def get_name(self) -> str:
-        return "system_profiler"
-
-    def start(self, agent, args: Dict[str, Any]):
-        """Collects all system information and stores it in the buffer."""
-        print("Starting system profiler plugin...")
-        profile = self._get_system_profile()
-
-        data_entry = {
-            "timestamp_utc": datetime.datetime.utcnow().isoformat(),
-            "log_type": "system_profile",
-            "content": profile
-        }
-        self._data_buffer.append(data_entry)
-        print("System profile collected.")
-
-    def stop(self):
-        # This is a one-shot plugin, so stop does nothing.
-        pass
-
-    def get_data(self) -> List[Dict[str, Any]]:
-        """Returns the collected profile and clears the buffer."""
-        data_to_send = list(self._data_buffer)
-        self._data_buffer.clear()
-        return data_to_send
-
-    def _get_system_profile(self) -> Dict[str, Any]:
-        """Gathers various system details."""
+    def run(self) -> Dict[str, Any]:
+        """Gathers various system details and returns them."""
         profile = {}
 
         # OS Info
@@ -113,3 +77,7 @@ class SystemProfilerPlugin(BasePlugin):
         profile['network'] = network_info
 
         return profile
+
+def load():
+    """Entry point for the plugin loader."""
+    return SystemProfiler()

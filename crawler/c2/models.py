@@ -24,6 +24,8 @@ class Task(Base):
     id = Column(Integer, primary_key=True, index=True)
     command = Column(String)
     args_json = Column(Text, name="args")
+    status = Column(String, default="pending")  # pending, dispatched, completed, error
+    result = Column(Text, nullable=True)
     implant_id = Column(String, ForeignKey("implants.id"))
     implant = relationship("Implant", back_populates="tasks")
 
@@ -48,8 +50,14 @@ class TaskCreate(TaskBase):
 class TaskSchema(TaskBase):
     id: int
     implant_id: str
+    status: str
+    result: str | None = None
     class Config:
         from_attributes = True
+
+class TaskResult(BaseModel):
+    task_id: int
+    result: str
 
 class TaskResponse(BaseModel):
     tasks: List[TaskSchema] = []
