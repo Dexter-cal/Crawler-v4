@@ -64,7 +64,7 @@ class Evasion:
         if elapsed < (sleep_duration * 0.8): # If time passed significantly faster
             self.results["time_acceleration"] = f"Detected accelerated time. Slept for {sleep_duration}s but only {elapsed:.2f}s passed."
 
-    def run(self):
+    def run(self, args: dict):
         """Runs all evasion checks."""
         self.get_username()
         self.get_mac_address()

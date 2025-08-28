@@ -121,7 +121,49 @@ def test_comprehensive_flow(c2_server_and_db):
             break
     assert evasion_task_found, "Evasion plugin task was not found in the task list."
 
-    # 5. Terminate
+    # 5. Test Anti-Forensics Plugin (Secure Delete)
+    print("\n--- Testing Anti-Forensics Plugin ---")
+    file_to_delete = "test_file_to_delete.txt"
+    with open(file_to_delete, "w") as f:
+        f.write("This is a test file that should be securely deleted.")
+    assert os.path.exists(file_to_delete)
+
+    try:
+        # Tier 1 should already be set from evasion test, but we can be explicit
+        # requests.put(f"{C2_URL}/admin/tier/{implant_id}/1")
+
+        af_task_payload = {
+            "command": "start_plugin",
+            "args": {"plugin_name": "anti_forensics", "file_path": file_to_delete}
+        }
+        response = requests.post(f"{C2_URL}/admin/tasks/{implant_id}", json=af_task_payload)
+        assert response.status_code == 200
+        time.sleep(agent.BEACON_INTERVAL_SECONDS + 2)
+
+        # Verify secure delete results
+        response = requests.get(f"{C2_URL}/admin/tasks/{implant_id}")
+        assert response.status_code == 200
+        tasks = response.json()
+
+        af_task_found = False
+        for task in tasks:
+            if task.get("args", {}).get("plugin_name") == "anti_forensics":
+                assert task["status"] == "completed"
+                result_data = json.loads(task["result"])
+                assert result_data["status"] == "success"
+                print(f"Test: Anti-forensics plugin ran successfully: {result_data['message']}")
+                af_task_found = True
+                break
+        assert af_task_found, "Anti-forensics plugin task was not found."
+        assert not os.path.exists(file_to_delete), "Test file was not deleted."
+        print("Test: Verified that the file was securely deleted.")
+
+    finally:
+        # Clean up the test file if it still exists for some reason
+        if os.path.exists(file_to_delete):
+            os.remove(file_to_delete)
+
+    # 6. Terminate
     print("\n--- Terminating Agent ---")
     terminate_payload = {"command": "terminate", "args": {}}
     requests.post(f"{C2_URL}/admin/tasks/{implant_id}", json=terminate_payload)

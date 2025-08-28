@@ -7,7 +7,7 @@ from typing import Dict, Any
 class SystemProfiler:
     """A plugin to gather a comprehensive profile of the target system."""
 
-    def run(self) -> Dict[str, Any]:
+    def run(self, args: dict) -> Dict[str, Any]:
         """Gathers various system details and returns them."""
         profile = {}
 

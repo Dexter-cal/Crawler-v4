@@ -97,7 +97,7 @@ class CrawlerAgent:
         if command == "start_plugin" and plugin_name in self.loaded_plugins:
             try:
                 plugin_instance = self.loaded_plugins[plugin_name]
-                result = plugin_instance.run()
+                result = plugin_instance.run(args)
 
                 if task_id and result is not None:
                     headers = {"Authorization": f"Bearer {self.token}"}
