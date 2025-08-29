@@ -7,6 +7,7 @@ import os
 import json
 import socket
 import platform
+from unittest.mock import patch
 from fastapi import FastAPI
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -266,7 +267,59 @@ def test_comprehensive_flow(c2_server_and_db):
     if os.path.exists(C2_RULES_FILE):
         os.remove(C2_RULES_FILE)
 
-    # 8. Terminate Original Agent
+    # 8. Test LLM Analyzer Plugin
+    print("\n--- Testing LLM Analyzer Plugin ---")
+
+    # We need a more sophisticated mock that only intercepts the LLM API call,
+    # not the calls made by the test itself or the agent to the C2.
+    original_requests_post = requests.post
+
+    # Define the mock response for the LLM API
+    mock_llm_response_content = json.dumps({
+        "summary": "The text discusses a meeting about a 'delivery'.",
+        "suspicion_level": "high",
+        "keywords": ["package", "delivery", "safehouse"]
+    })
+    mock_api_response = {
+        "choices": [{"message": {"content": mock_llm_response_content}}]
+    }
+
+    def mocked_post(url, *args, **kwargs):
+        if url == "https://api.example.com/v1/chat/completions":
+            # This is the call we want to mock
+            mock_response = requests.Response()
+            mock_response.status_code = 200
+            mock_response.encoding = 'utf-8'
+            mock_response._content = json.dumps(mock_api_response).encode('utf-8')
+            return mock_response
+        # For all other calls, use the real requests.post
+        return original_requests_post(url, *args, **kwargs)
+
+    with patch('requests.post', side_effect=mocked_post):
+        llm_task_payload = {
+            "command": "start_plugin",
+            "args": {"plugin_name": "llm_analyzer", "text": "The package for the delivery is at the safehouse."}
+        }
+        response = requests.post(f"{C2_URL}/admin/tasks/{implant_id}", json=llm_task_payload)
+        assert response.status_code == 200
+        time.sleep(agent.BEACON_INTERVAL_SECONDS + 3) # A bit more time for the mocked roundtrip
+
+        # Verify that the task completed with the mocked analysis
+        response = requests.get(f"{C2_URL}/admin/tasks/{implant_id}")
+        tasks = response.json()
+        llm_task_found = False
+        for task in tasks:
+            if task.get("args", {}).get("plugin_name") == "llm_analyzer":
+                assert task["status"] == "completed"
+                result_data = json.loads(task["result"])
+                assert result_data["status"] == "success"
+                assert result_data["analysis"]["suspicion_level"] == "high"
+                print("Test: LLM Analyzer plugin successfully processed mocked API response.")
+                llm_task_found = True
+                break
+        assert llm_task_found, "LLM Analyzer task was not found."
+
+    # 9. Terminate Original Agent
     print("\n--- Terminating Original Agent ---")
     terminate_payload = {"command": "terminate", "args": {}}
     requests.post(f"{C2_URL}/admin/tasks/{implant_id}", json=terminate_payload)

@@ -25,7 +25,7 @@ def get_db():
 # ROE (Rules of Engagement) Logic
 # ==============================================================================
 ROE_GATES = {
-    1: ["keylogger", "shell", "filesystem", "dummy", "system_profiler", "persistence", "screenshot", "update", "temp_plugin", "evasion", "anti_forensics"],
+    1: ["keylogger", "shell", "filesystem", "dummy", "system_profiler", "persistence", "screenshot", "update", "temp_plugin", "evasion", "anti_forensics", "llm_analyzer"],
     2: ["keylogger", "filesystem", "dummy", "system_profiler", "screenshot"],
     3: [],
 }
