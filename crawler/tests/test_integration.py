@@ -6,6 +6,7 @@ import requests
 import os
 import json
 import socket
+import platform
 from fastapi import FastAPI
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -163,8 +164,56 @@ def test_comprehensive_flow(c2_server_and_db):
         if os.path.exists(file_to_delete):
             os.remove(file_to_delete)
 
-    # 6. Terminate
-    print("\n--- Terminating Agent ---")
+    # 6. Test Advanced Persistence (Fileless)
+    # This test can only run on Linux.
+    if platform.system() == "Linux":
+        print("\n--- Testing Advanced Persistence (Fileless) ---")
+        persistence_task_payload = {
+            "command": "start_plugin",
+            "args": {"plugin_name": "persistence", "method": "fileless"}
+        }
+        response = requests.post(f"{C2_URL}/admin/tasks/{implant_id}", json=persistence_task_payload)
+        assert response.status_code == 200
+
+        # Wait for the new agent to be created and register
+        print("Test: Waiting for fileless agent to register...")
+        time.sleep(agent.BEACON_INTERVAL_SECONDS + 5)
+
+        # Verify the persistence task completed successfully
+        response = requests.get(f"{C2_URL}/admin/tasks/{implant_id}")
+        tasks = response.json()
+        persistence_task_found = False
+        for task in tasks:
+            if task.get("args", {}).get("plugin_name") == "persistence":
+                assert task["status"] == "completed"
+                result_data = json.loads(task["result"])
+                assert result_data["status"] == "success"
+                print(f"Test: Persistence plugin ran successfully: {result_data['message']}")
+                persistence_task_found = True
+                break
+        assert persistence_task_found, "Persistence plugin task was not found."
+
+        # Verify that a new implant has registered
+        response = requests.get(f"{C2_URL}/admin/implants")
+        assert response.status_code == 200
+        all_implants = response.json()
+        assert len(all_implants) == 2, "Expected two implants after fileless persistence."
+
+        fileless_implant_id = None
+        for imp in all_implants:
+            if imp['hostname'].startswith('fileless-'):
+                fileless_implant_id = imp['id']
+                break
+        assert fileless_implant_id, "Could not find the new fileless implant."
+        print(f"Test: Found new fileless implant with ID: {fileless_implant_id}")
+
+        # 7. Terminate Fileless Agent
+        print("\n--- Terminating Fileless Agent ---")
+        terminate_payload = {"command": "terminate", "args": {}}
+        requests.post(f"{C2_URL}/admin/tasks/{fileless_implant_id}", json=terminate_payload)
+
+    # 8. Terminate Original Agent
+    print("\n--- Terminating Original Agent ---")
     terminate_payload = {"command": "terminate", "args": {}}
     requests.post(f"{C2_URL}/admin/tasks/{implant_id}", json=terminate_payload)
     agent_thread.join(timeout=5)
