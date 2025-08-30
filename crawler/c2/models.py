@@ -1,14 +1,10 @@
-from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, ForeignKey
 from sqlalchemy.orm import relationship
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 import json
 
 from .database import Base
-
-# ==============================================================================
-# SQLAlchemy Models (Define Database Tables)
-# ==============================================================================
 
 class Implant(Base):
     __tablename__ = "implants"
@@ -24,7 +20,7 @@ class Task(Base):
     id = Column(Integer, primary_key=True, index=True)
     command = Column(String)
     args_json = Column(Text, name="args")
-    status = Column(String, default="pending")  # pending, dispatched, completed, error
+    status = Column(String, default="pending")
     result = Column(Text, nullable=True)
     implant_id = Column(String, ForeignKey("implants.id"))
     implant = relationship("Implant", back_populates="tasks")
@@ -35,10 +31,6 @@ class Task(Base):
     @args.setter
     def args(self, value):
         self.args_json = json.dumps(value)
-
-# ==============================================================================
-# Pydantic Schemas (Define API Data Shapes)
-# ==============================================================================
 
 class TaskBase(BaseModel):
     command: str
@@ -51,7 +43,7 @@ class TaskSchema(TaskBase):
     id: int
     implant_id: str
     status: str
-    result: str | None = None
+    result: Optional[str] = None
     class Config:
         from_attributes = True
 
@@ -67,10 +59,6 @@ class ImplantBase(BaseModel):
     os: str
     pid: int
 
-class ImplantCreate(ImplantBase):
-    id: str
-    roe_tier: int = 3
-
 class ImplantSchema(ImplantBase):
     id: str
     roe_tier: int
@@ -85,3 +73,18 @@ class RegistrationResponse(BaseModel):
 class DataPayload(BaseModel):
     plugin: str
     data: str
+
+class DataLog(Base):
+    __tablename__ = "datalogs"
+    id = Column(Integer, primary_key=True, index=True)
+    implant_id = Column(String, ForeignKey("implants.id"))
+    plugin_name = Column(String)
+    data_json = Column(Text)
+
+class DataLogSchema(BaseModel):
+    id: int
+    implant_id: str
+    plugin_name: str
+    data_json: str
+    class Config:
+        from_attributes = True

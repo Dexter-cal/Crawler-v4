@@ -19,67 +19,56 @@ class RuleEngine:
             return []
 
     def process_data(self, implant_id: str, plugin_name: str, result: Dict[str, Any], db_session):
-        """
-        Processes the result data from a plugin against the loaded rules.
-        """
         triggered_actions = []
         for rule in self.rules:
             if self._check_condition(rule.get("condition", {}), plugin_name, result):
                 action = rule.get("action", {})
                 print(f"Rule '{rule.get('name')}' triggered for implant {implant_id}.")
-                self._execute_action(action, implant_id, db_session)
+                self._execute_action(action, implant_id, result, db_session)
                 triggered_actions.append(action)
         return triggered_actions
 
     def _check_condition(self, condition: Dict[str, Any], plugin_name: str, result: Dict[str, Any]) -> bool:
-        """
-        Checks if the result data meets the rule's condition.
-        This is a simple implementation. A real engine would be more complex.
-        """
-        # Condition must specify the plugin it applies to.
         if condition.get("plugin") != plugin_name:
             return False
 
-        # 'result_not_empty' is a simple condition to check if the plugin returned any data.
         if condition.get("result_not_empty", False):
-            # For the evasion plugin, a "finding" means any key other than 'status' exists.
             if plugin_name == 'evasion':
                 return any(key != 'status' for key in result.keys())
-            # For other plugins, we just check if the result dict is not empty.
             elif result:
                 return True
 
         return False
 
-    def _execute_action(self, action: Dict[str, Any], implant_id: str, db_session):
-        """
-        Executes the action defined in a rule, e.g., creating a new task.
-        """
+    def _execute_action(self, action: Dict[str, Any], implant_id: str, trigger_result: Dict[str, Any], db_session):
+        from . import models
         action_type = action.get("type")
-        if action_type == "task":
-            from . import models  # Lazy import to avoid circular dependency
 
+        if action_type == "task":
             task_data = action.get("task_details", {})
             command = task_data.get("command")
             args = task_data.get("args", {})
-
-            if not command:
-                print("Rule action error: 'task' action is missing 'command'.")
-                return
-
-            # Create and add the new task to the database session
-            db_task = models.Task(
-                implant_id=implant_id,
-                command=command,
-                args=args,
-                status="pending"
-            )
+            if not command: return
+            db_task = models.Task(implant_id=implant_id, command=command, args=args, status="pending")
             db_session.add(db_task)
-            # The calling function will be responsible for committing the session.
             print(f"Action: Queued new task '{command}' for implant {implant_id}.")
 
+        elif action_type == "analyze_with_llm":
+            prompt_template = action.get("prompt_template")
+            if not prompt_template: return
+
+            try:
+                trigger_data_str = json.dumps(trigger_result, indent=2)
+                text_for_llm = prompt_template.format(trigger_data=trigger_data_str)
+            except KeyError: return
+
+            llm_args = {"plugin_name": "llm_analyzer", "text": text_for_llm}
+            db_task = models.Task(implant_id=implant_id, command="start_plugin", args=llm_args, status="pending")
+            db_session.add(db_task)
+            db_session.flush()
+            print(f"Action: Queued llm_analyzer task (ID: {db_task.id}) for implant {implant_id}.")
+
         elif action_type == "alert":
-            # In a real system, this would go to a logging system, SIEM, or UI.
             print(f"ALERT: {action.get('message', 'No message provided.')} (Implant: {implant_id})")
 
         else:

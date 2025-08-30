@@ -5,79 +5,38 @@ import psutil
 from typing import Dict, Any
 
 class SystemProfiler:
-    """A plugin to gather a comprehensive profile of the target system."""
+    def __init__(self):
+        self.type = "one-shot"
 
     def run(self, args: dict) -> Dict[str, Any]:
-        """Gathers various system details and returns them."""
         profile = {}
-
-        # OS Info
-        profile['os'] = {
-            'system': platform.system(),
-            'release': platform.release(),
-            'version': platform.version(),
-            'architecture': platform.machine(),
-            'hostname': socket.gethostname()
-        }
-
-        # User Info
+        profile['os'] = {'system': platform.system(), 'release': platform.release(), 'version': platform.version(), 'architecture': platform.machine(), 'hostname': socket.gethostname()}
         try:
-            profile['user'] = {
-                'login_name': os.getlogin(),
-                'home_dir': os.path.expanduser("~")
-            }
+            profile['user'] = {'login_name': os.getlogin(), 'home_dir': os.path.expanduser("~")}
         except Exception:
             profile['user'] = "Could not determine user info."
-
-        # CPU Info
-        profile['cpu'] = {
-            'physical_cores': psutil.cpu_count(logical=False),
-            'total_cores': psutil.cpu_count(logical=True),
-            'cpu_usage_percent': psutil.cpu_percent(interval=1)
-        }
-
-        # Memory Info
+        profile['cpu'] = {'physical_cores': psutil.cpu_count(logical=False), 'total_cores': psutil.cpu_count(logical=True), 'cpu_usage_percent': psutil.cpu_percent(interval=1)}
         mem = psutil.virtual_memory()
-        profile['memory'] = {
-            'total_gb': round(mem.total / (1024**3), 2),
-            'available_gb': round(mem.available / (1024**3), 2),
-            'used_percent': mem.percent
-        }
-
-        # Disk Info
+        profile['memory'] = {'total_gb': round(mem.total / (1024**3), 2), 'available_gb': round(mem.available / (1024**3), 2), 'used_percent': mem.percent}
         partitions = psutil.disk_partitions()
         disk_info = []
         for p in partitions:
             try:
                 usage = psutil.disk_usage(p.mountpoint)
-                disk_info.append({
-                    'device': p.device,
-                    'mountpoint': p.mountpoint,
-                    'filesystem': p.fstype,
-                    'total_gb': round(usage.total / (1024**3), 2),
-                    'used_percent': usage.percent
-                })
-            except Exception:
-                continue
+                disk_info.append({'device': p.device, 'mountpoint': p.mountpoint, 'filesystem': p.fstype, 'total_gb': round(usage.total / (1024**3), 2), 'used_percent': usage.percent})
+            except Exception: continue
         profile['disks'] = disk_info
-
-        # Network Info
         net_if_addrs = psutil.net_if_addrs()
         network_info = []
         for interface, addrs in net_if_addrs.items():
             if_info = {'interface': interface, 'mac': '', 'ipv4': '', 'ipv6': ''}
             for addr in addrs:
-                if addr.family == psutil.AF_LINK:
-                    if_info['mac'] = addr.address
-                elif addr.family == socket.AF_INET:
-                    if_info['ipv4'] = addr.address
-                elif addr.family == socket.AF_INET6:
-                    if_info['ipv6'] = addr.address
+                if addr.family == psutil.AF_LINK: if_info['mac'] = addr.address
+                elif addr.family == socket.AF_INET: if_info['ipv4'] = addr.address
+                elif addr.family == socket.AF_INET6: if_info['ipv6'] = addr.address
             network_info.append(if_info)
         profile['network'] = network_info
-
         return profile
 
 def load():
-    """Entry point for the plugin loader."""
     return SystemProfiler()

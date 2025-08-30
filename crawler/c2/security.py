@@ -1,36 +1,25 @@
-from fastapi import Depends, HTTPException, Security
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
-import os
 
-# --- Configuration ---
-# In a real production environment, this secret key should be loaded securely,
-# for example from an environment variable or a secret management system.
-SECRET_KEY = os.environ.get("CRAWLER_SECRET_KEY", "a_very_secret_key_for_development_only")
+SECRET_KEY = "a_very_secret_key"
+print(f"SECURITY MODULE LOADED. SECRET KEY IS: {SECRET_KEY}")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # Token valid for 24 hours
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
-security = HTTPBearer()
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-# --- Token Logic ---
-
-def create_access_token(data: dict) -> str:
-    """Creates a new JWT access token."""
+def create_access_token(data: dict):
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-def verify_token(token: str) -> str:
-    """
-    Verifies the JWT token.
-    If valid, returns the implant_id (from the 'sub' claim).
-    If invalid, raises an HTTPException.
-    """
+def get_current_implant_id(token: str = Depends(oauth2_scheme)):
     credentials_exception = HTTPException(
-        status_code=401,
+        status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
@@ -42,10 +31,3 @@ def verify_token(token: str) -> str:
         return implant_id
     except JWTError:
         raise credentials_exception
-
-async def get_current_implant_id(credentials: HTTPAuthorizationCredentials = Security(security)) -> str:
-    """
-    A FastAPI dependency that can be used in path operations to protect them.
-    It extracts the token from the Authorization header, verifies it, and returns the implant_id.
-    """
-    return verify_token(credentials.credentials)
