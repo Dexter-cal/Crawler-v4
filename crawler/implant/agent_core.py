@@ -103,6 +103,7 @@ class CrawlerAgent:
         while self.is_running:
             try:
                 # Get tasks from C2
+                print(f"Agent about to beacon with token: {self.token}")
                 headers = {"Authorization": f"Bearer {self.token}"}
                 response = requests.get(f"{self.C2_URL}/tasks", headers=headers, timeout=5)
                 if response.status_code == 401:
