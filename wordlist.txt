@@ -1,0 +1,17 @@
+admin
+login
+dashboard
+uploads
+assets
+config
+.git
+.env
+README.md
+robots.txt
+sitemap.xml
+test
+dev
+prod
+backup
+temp
+tmp
