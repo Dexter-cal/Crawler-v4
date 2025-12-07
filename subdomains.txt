@@ -8,7 +8,6 @@ app
 blog
 shop
 store
-dev
 staging
 admin
 portal
@@ -22,5 +21,3 @@ enterpriseenrollment
 enterpriseregistration
 sip
 msoid
-autodiscover
-lyncdiscover
